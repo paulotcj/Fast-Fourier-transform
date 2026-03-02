@@ -13,30 +13,33 @@ class Signal:
         self.num_samples : int   = num_samples
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
-    def _compose_values(self,time_span: np.ndarray) -> np.ndarray:
-        """Builds the composite signal as a sum of four phase-shifted cosine waves."""
+    def _compose_values(self,time_span_samples: np.ndarray) -> np.ndarray:
+        """Builds the composite signal as a sum of four phase-shifted cosine waves.
+        The param time_span_samples is equidistant points in space/time where we want to sample the wave
+        function.
+        """
         return (
-              np.cos(     2 * np.pi * time_span - 1.571)   #  1 Hz
-            + np.cos( 7 * 2 * np.pi * time_span - 1.571)   #  7 Hz
-            + np.cos(13 * 2 * np.pi * time_span - 1.571)   # 13 Hz
-            + np.cos(15 * 2 * np.pi * time_span - 1.571)   # 15 Hz
+              np.cos(     2 * np.pi * time_span_samples - 1.571)   #  1 Hz
+            + np.cos( 7 * 2 * np.pi * time_span_samples - 1.571)   #  7 Hz
+            + np.cos(13 * 2 * np.pi * time_span_samples - 1.571)   # 13 Hz
+            + np.cos(15 * 2 * np.pi * time_span_samples - 1.571)   # 15 Hz
         )
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def get_signal(self) -> dict[str,Any]:
         #-----
-        time_span     : np.ndarray  = np.linspace(start=0, stop=self.duration, num=self.num_samples)
-        values        : np.ndarray  = self._compose_values(time_span=self.time_span)
-        num_samples   : int         = self.values.size
-        step_interval : float       = float(self.time_span[1] - self.time_span[0])  # seconds per sample
-        sample_rate   : float       = 1.0 / self.step_interval                      # samples per second (Hz)
+        time_span_samples   : np.ndarray  = np.linspace(start=0, stop=self.duration, num=self.num_samples)
+        wave_values         : np.ndarray  = self._compose_values(time_span_samples=time_span_samples)
+        # num_samples         : int         = wave_values.size
+        step_interval       : float       = float(time_span_samples[1] - time_span_samples[0])  
+        sample_rate         : float       = 1.0 / step_interval
         #-----
-        print('hi')
 
+        print(1)
         return_obj : dict[str,Any] = {
-            'time_span'         : time_span,
-            'values'            : values,
-            'num_samples'       : num_samples,
+            'time_span_samples' : time_span_samples,
+            'wave_values'       : wave_values,
+            'num_samples'       : self.num_samples,
             'step_interval'     : step_interval,
             'sample_rate'       : sample_rate,
         }
@@ -50,11 +53,14 @@ class DiscreteFourierTransform:
     """Computes the Discrete Fourier Transform of a Signal and exposes the results."""
     #-------------------------------------------------------------------------
     def __init__(self, signal: Signal) -> None:
-        self._signal: Signal                = signal
-        self._result: np.ndarray            = self._compute()
-        self._magnitude: np.ndarray         = self._compute_magnitude()
-        self.usable_frequencies: np.ndarray = self._compute_usable_frequencies()
-        self.amplitude: np.ndarray          = self._compute_amplitude()
+        signal_data: dict[str, Any]             = signal.get_signal()
+        self._signal_wave_values: np.ndarray    = signal_data['wave_values']
+        self._signal_num_samples: int           = signal_data['num_samples']
+        self._signal_sample_rate: float         = signal_data['sample_rate']
+        self._result: np.ndarray                = self._compute()
+        self._magnitude: np.ndarray             = self._compute_magnitude()
+        self.usable_frequencies: np.ndarray     = self._compute_usable_frequencies()
+        self.amplitude: np.ndarray              = self._compute_amplitude()
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def _compute(self) -> np.ndarray:
@@ -67,7 +73,7 @@ class DiscreteFourierTransform:
              k/N ~ F  (frequency index maps to frequency)
              n   ~ t  (sample index maps to time)
         """
-        num_samples: int         = self._signal.num_samples
+        num_samples: int         = self._signal_num_samples
         neg_two_pi_over_n: float = -math.pi * 2 / num_samples
         result: np.ndarray       = np.array([0 + 0j] * num_samples)
 
@@ -77,8 +83,8 @@ class DiscreteFourierTransform:
             for n in range(num_samples):
                 exp_value: float = neg_two_pi_over_n * k * n
                 # Euler's formula: e^(j*x) = cos(x) + j*sin(x)
-                sum_real += self._signal.values[n] * math.cos(exp_value)
-                sum_imag += self._signal.values[n] * math.sin(exp_value)
+                sum_real += self._signal_wave_values[n] * math.cos(exp_value)
+                sum_imag += self._signal_wave_values[n] * math.sin(exp_value)
             result[k] = complex(real=sum_real, imag=sum_imag)
 
         return result
@@ -99,10 +105,10 @@ class DiscreteFourierTransform:
         """Returns the frequency bins up to the Nyquist cutoff (lower half of the spectrum)."""
         frequencies: np.ndarray = np.linspace(
             start=0,
-            stop=self._signal.sample_rate,
-            num=self._signal.num_samples,
+            stop=self._signal_sample_rate,
+            num=self._signal_num_samples,
         )
-        return frequencies[0 : self._signal.num_samples // 2]
+        return frequencies[0 : self._signal_num_samples // 2]
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def _compute_amplitude(self) -> np.ndarray:
@@ -114,7 +120,7 @@ class DiscreteFourierTransform:
           e.g. a 1 Hz tone with N=8 yields raw magnitude ~3.9997
                3.9997 * 2 / 8 = 0.9999 ≈ 1.0
         """
-        return self._magnitude[0 : self._signal.num_samples // 2] * 2 / self._signal.num_samples
+        return self._magnitude[0 : self._signal_num_samples // 2] * 2 / self._signal_num_samples
     #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
@@ -122,8 +128,10 @@ class Plotter:
     """Renders the time-domain and frequency-domain graphs."""
     #-------------------------------------------------------------------------
     def __init__(self, signal: Signal, dft: DiscreteFourierTransform) -> None:
-        self._signal: Signal = signal
-        self._dft: DiscreteFourierTransform       = dft
+        signal_data                     : dict[str, Any]            = signal.get_signal()
+        self._signal_time_span_samples  : np.ndarray                = signal_data['time_span_samples']
+        self._signal_values             : np.ndarray                = signal_data['values']
+        self._dft                       : DiscreteFourierTransform  = dft
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def plot_time_domain(self) -> None:
@@ -131,13 +139,13 @@ class Plotter:
         plt.title(label="Time-domain signal")
         plt.xlabel(xlabel="Time [s]")
         plt.ylabel(ylabel="Amplitude")
-        plt.plot(self._signal.time_span, self._signal.values)
+        plt.plot(self._signal_time_span_samples, self._signal_values)
         plt.show()
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def plot_frequency_spectrum(self) -> None:
         """Plots the DFT magnitude spectrum up to the Nyquist frequency."""
-        plt.title(label="Frequency spectrum (DFT)")
+        plt.title(label="Frequency spectrum (Discrete Fourier Transform)")
         plt.xlabel(xlabel="Frequency [Hz]")
         plt.ylabel(ylabel="Amplitude")
         plt.bar(x=self._dft.usable_frequencies, height=self._dft.amplitude, width=1)
