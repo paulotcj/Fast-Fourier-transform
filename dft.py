@@ -13,7 +13,7 @@ class Signal:
         self.num_samples : int   = num_samples
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
-    def _compose_values(self,time_span_samples: np.ndarray) -> np.ndarray:
+    def _compose_wave_values(self,time_span_samples: np.ndarray) -> np.ndarray:
         """Builds the composite signal as a sum of four phase-shifted cosine waves.
         The param time_span_samples is equidistant points in space/time where we want to sample the wave
         function.
@@ -28,14 +28,15 @@ class Signal:
     #-------------------------------------------------------------------------
     def get_signal(self) -> dict[str,Any]:
         #-----
-        time_span_samples   : np.ndarray  = np.linspace(start=0, stop=self.duration, num=self.num_samples)
-        wave_values         : np.ndarray  = self._compose_values(time_span_samples=time_span_samples)
-        # num_samples         : int         = wave_values.size
-        step_interval       : float       = float(time_span_samples[1] - time_span_samples[0])  
-        sample_rate         : float       = 1.0 / step_interval
+        time_span_samples_arr : np.ndarray = np.linspace(start=0, stop=self.duration, num=self.num_samples) # evenly spaced numbers over a specified interval
+        wave_values_arr       : np.ndarray = self._compose_wave_values(time_span_samples=time_span_samples_arr)
+        step_interval         : float      = float(time_span_samples_arr[1] - time_span_samples_arr[0])
+        sample_rate           : float      = 1.0 / step_interval
+        #-----
+        time_span_samples : list[float] = time_span_samples_arr.tolist()
+        wave_values       : list[float] = wave_values_arr.tolist()
         #-----
 
-        print(1)
         return_obj : dict[str,Any] = {
             'time_span_samples' : time_span_samples,
             'wave_values'       : wave_values,
@@ -52,15 +53,16 @@ class Signal:
 class DiscreteFourierTransform:
     """Computes the Discrete Fourier Transform of a Signal and exposes the results."""
     #-------------------------------------------------------------------------
-    def __init__(self, signal: Signal) -> None:
-        signal_data: dict[str, Any]             = signal.get_signal()
-        self._signal_wave_values: np.ndarray    = signal_data['wave_values']
-        self._signal_num_samples: int           = signal_data['num_samples']
-        self._signal_sample_rate: float         = signal_data['sample_rate']
-        self._result: np.ndarray                = self._compute()
-        self._magnitude: np.ndarray             = self._compute_magnitude()
-        self.usable_frequencies: np.ndarray     = self._compute_usable_frequencies()
-        self.amplitude: np.ndarray              = self._compute_amplitude()
+    def __init__(self, signal_data  : dict[str, Any]) -> None:
+
+        self._signal_wave_values    : list[float]   = signal_data['wave_values']
+        self._signal_num_samples    : int           = signal_data['num_samples']
+        self._signal_sample_rate    : float         = signal_data['sample_rate']
+
+        self._result                : np.ndarray    = self._compute()
+        self._magnitude             : np.ndarray    = self._compute_magnitude()
+        self.usable_frequencies     : np.ndarray    = self._compute_usable_frequencies()
+        self.amplitude              : np.ndarray    = self._compute_amplitude()
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def _compute(self) -> np.ndarray:
@@ -73,21 +75,25 @@ class DiscreteFourierTransform:
              k/N ~ F  (frequency index maps to frequency)
              n   ~ t  (sample index maps to time)
         """
-        num_samples: int         = self._signal_num_samples
-        neg_two_pi_over_n: float = -math.pi * 2 / num_samples
-        result: np.ndarray       = np.array([0 + 0j] * num_samples)
+        num_samples         : int           = self._signal_num_samples
+        neg_two_pi_over_n   : float         = -math.pi * 2 / num_samples
+        result_real_imag    : np.ndarray    = np.array([0 + 0j] * num_samples) #initializes an array or complex numbers (all zeroes)
 
+        #-----
         for k in range(num_samples):
             sum_real: float = 0.0
             sum_imag: float = 0.0
+            #-----
             for n in range(num_samples):
                 exp_value: float = neg_two_pi_over_n * k * n
                 # Euler's formula: e^(j*x) = cos(x) + j*sin(x)
                 sum_real += self._signal_wave_values[n] * math.cos(exp_value)
                 sum_imag += self._signal_wave_values[n] * math.sin(exp_value)
-            result[k] = complex(real=sum_real, imag=sum_imag)
+            #-----
+            result_real_imag[k] = complex(real=sum_real, imag=sum_imag)
+        #-----
 
-        return result
+        return result_real_imag
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def _compute_magnitude(self) -> np.ndarray:
@@ -102,11 +108,23 @@ class DiscreteFourierTransform:
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def _compute_usable_frequencies(self) -> np.ndarray:
-        """Returns the frequency bins up to the Nyquist cutoff (lower half of the spectrum)."""
+        """
+        Builds the full frequency axis from 0 Hz to the sample rate, then discards the upper half.
+
+        The DFT of N real-valued samples produces N complex coefficients, but the upper half
+        (indices N/2 to N-1) are mirror images of the lower half and carry no new information.
+        The highest frequency that can be faithfully represented is sample_rate / 2, known as
+        the Nyquist frequency. Everything above it is discarded.
+
+          Example — N=8 samples, sample_rate=8 Hz:
+            Full frequency axis:   [0, 1, 2, 3, 4, 5, 6, 7]  (8 bins, spacing = 1 Hz)
+            After Nyquist cutoff:  [0, 1, 2, 3]               (keep only the first 4 = N//2)
+            Bins 4-7 are the complex conjugate mirror of bins 0-3 and are dropped.
+        """
         frequencies: np.ndarray = np.linspace(
-            start=0,
-            stop=self._signal_sample_rate,
-            num=self._signal_num_samples,
+            start = 0,
+            stop  = self._signal_sample_rate,
+            num   = self._signal_num_samples,
         )
         return frequencies[0 : self._signal_num_samples // 2]
     #-------------------------------------------------------------------------
@@ -127,10 +145,9 @@ class DiscreteFourierTransform:
 class Plotter:
     """Renders the time-domain and frequency-domain graphs."""
     #-------------------------------------------------------------------------
-    def __init__(self, signal: Signal, dft: DiscreteFourierTransform) -> None:
-        signal_data                     : dict[str, Any]            = signal.get_signal()
-        self._signal_time_span_samples  : np.ndarray                = signal_data['time_span_samples']
-        self._signal_values             : np.ndarray                = signal_data['values']
+    def __init__(self, signal_data: dict[str, Any], dft: DiscreteFourierTransform) -> None:
+        self._signal_time_span_samples  : list[float]               = signal_data['time_span_samples']
+        self._signal_values             : list[float]               = signal_data['wave_values']
         self._dft                       : DiscreteFourierTransform  = dft
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
@@ -155,12 +172,16 @@ class Plotter:
 
 #-------------------------------------------------------------------------
 def main() -> None:
+    #-----
     signal_duration : float = 0.875 * 5 # initial duration set to 0.875 but decided to lengthen by multiplying by 5
     signal_num_samples : int = 8 * 5 * 32 # originall 8 sambles for a duration of 0.875, once the signal was lengthen by 5 wr then multiplied by 5 and then later we multiplied by 32 to add more data
-    signal: Signal = Signal(duration=signal_duration, num_samples=signal_num_samples)
-    dft: DiscreteFourierTransform = DiscreteFourierTransform(signal=signal)
-    plotter: Plotter = Plotter(signal=signal, dft=dft)
-
+    #-----
+    signal: Signal                        = Signal(duration=signal_duration, num_samples=signal_num_samples)
+    signal_data: dict[str, Any]           = signal.get_signal()
+    #-----
+    dft: DiscreteFourierTransform         = DiscreteFourierTransform(signal_data=signal_data)
+    #-----
+    plotter: Plotter                      = Plotter(signal_data=signal_data, dft=dft)
     plotter.plot_time_domain()
     plotter.plot_frequency_spectrum()
 #-------------------------------------------------------------------------
