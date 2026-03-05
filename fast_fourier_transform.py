@@ -4,6 +4,34 @@ from matplotlib.axes import Axes
 import math
 from typing import Any
 
+'''
+NOTE — Recursive vs iterative FFT
+
+The implementation below uses a recursive Cooley-Tukey Radix-2 approach.
+This maps closely to the mathematical definition and is easy to follow,
+making it a good fit for a learning context.
+
+However, recursive implementations are generally avoided in production systems
+for the following reasons:
+  - Function call overhead accumulates across log2(N) recursion levels
+  - Stack memory is consumed at every level (though the depth here is only
+    log2(N), e.g. 11 levels for N=2048, so stack overflow is not a concern)
+  - Iterative implementations have better cache behaviour and are easier
+    to vectorize with SIMD instructions
+
+The standard production alternative is an iterative Cooley-Tukey using:
+  1. Bit-reversal permutation — reorders the input into the sequence it would
+     naturally reach at the leaves of the recursion tree. Index bits are reversed,
+     e.g. for N=8: index 3 (binary 011) maps to index 6 (binary 110).
+  2. Bottom-up butterfly passes — log2(N) passes over the array, each doubling
+     the stride and combining element pairs with twiddle factors, exactly as the
+     recursion does but without any function calls.
+
+Beyond that, battle-tested libraries (FFTW, Intel MKL, cuFFT, numpy's pocketfft)
+go further with mixed-radix algorithms (handling any N without zero-padding),
+pre-computed twiddle factor tables, SIMD vectorization, and multi-threading.
+'''
+
 
 #-------------------------------------------------------------------------
 class Signal:
@@ -88,7 +116,7 @@ class FastFourierTransform:
         return power
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
-    def _fft_recursive(self, values: list[complex]) -> list[complex]:
+    def _fft_recursive(self, values_complex_input: list[complex]) -> list[complex]:
         """
         Cooley-Tukey Radix-2 DIT FFT — core recursive step.
 
@@ -107,34 +135,34 @@ class FastFourierTransform:
         is the sign. This is the "butterfly" operation that halves the work at
         every level of the recursion.
         """
-        n : int = len(values)
+        len_values_complex_input : int = len(values_complex_input)
 
         # Base case: the FFT of a single sample is the sample itself
-        if n == 1:
-            return list(values)
+        if len_values_complex_input == 1:
+            return list(values_complex_input)
 
         # Split into even- and odd-indexed samples
-        even_samples : list[complex] = values[0::2]   # x[0], x[2], x[4], ...
-        odd_samples  : list[complex] = values[1::2]   # x[1], x[3], x[5], ...
+        even_samples_complex : list[complex] = values_complex_input[0::2]   # x[0], x[2], x[4], ... starting at zero and take 2 steps at the time
+        odd_samples_complex  : list[complex] = values_complex_input[1::2]   # x[1], x[3], x[5], ... starting at one and take 2 steps at the time
 
         # Recursively compute FFT of each half
-        even_fft : list[complex] = self._fft_recursive(values=even_samples)
-        odd_fft  : list[complex] = self._fft_recursive(values=odd_samples)
+        even_fft : list[complex] = self._fft_recursive(values_complex_input=even_samples_complex)
+        odd_fft  : list[complex] = self._fft_recursive(values_complex_input=odd_samples_complex)
 
         # Combine via butterfly: twiddle factor W_N^k = cos(-2πk/N) + j*sin(-2πk/N)
-        result : list[complex] = [complex(real=0.0, imag=0.0)] * n
-        half_n : int           = n // 2
+        result_complex : list[complex] = [ complex( real = 0.0 , imag = 0.0 ) ] * len_values_complex_input
+        half_n : int           = len_values_complex_input // 2
 
         for k in range(half_n):
-            twiddle_angle : float   = -2.0 * math.pi * k / n
+            twiddle_angle : float   = -2.0 * math.pi * k / len_values_complex_input
             twiddle       : complex = complex(
                 real = math.cos(twiddle_angle),
                 imag = math.sin(twiddle_angle),
             )
-            result[k]          = even_fft[k] + twiddle * odd_fft[k]
-            result[k + half_n] = even_fft[k] - twiddle * odd_fft[k]
+            result_complex[k]          = even_fft[k] + twiddle * odd_fft[k]
+            result_complex[k + half_n] = even_fft[k] - twiddle * odd_fft[k]
 
-        return result
+        return result_complex
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def _compute(self) -> np.ndarray:
@@ -152,7 +180,7 @@ class FastFourierTransform:
         padding_size  : int           = self._fft_size - self._signal_num_samples
         complex_input                += [complex(real=0.0, imag=0.0)] * padding_size
 
-        result_list : list[complex] = self._fft_recursive(values=complex_input)
+        result_list : list[complex] = self._fft_recursive(values_complex_input=complex_input)
         return np.array(result_list)
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
