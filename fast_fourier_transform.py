@@ -131,6 +131,13 @@ class FastFourierTransform:
                  O[k]  = FFT of odd-indexed  samples: x[1], x[3], x[5], ...
                  k     = 0, 1, ..., N/2 - 1
 
+        Symbol definitions:
+          xn  — the n-th sample of the input signal (a real or complex number)
+          n   — sample index in the time domain, runs from 0 to N-1
+          N   — total number of samples in the current sub-problem (halves at each recursion level)
+          k   — frequency bin index in the output, runs from 0 to N/2-1 per butterfly pass
+          j   — the imaginary unit (j² = -1); used in place of 'i' to avoid confusion with indices
+
         The same twiddle factor W_N^k appears in both lines — the only difference
         is the sign. This is the "butterfly" operation that halves the work at
         every level of the recursion.
@@ -149,18 +156,68 @@ class FastFourierTransform:
         even_fft : list[complex] = self._fft_recursive(values_complex_input=even_samples_complex)
         odd_fft  : list[complex] = self._fft_recursive(values_complex_input=odd_samples_complex)
 
-        # Combine via butterfly: twiddle factor W_N^k = cos(-2πk/N) + j*sin(-2πk/N)
+        # --- Butterfly combination ---
+        #
+        # We now have E[k] (even_fft) and O[k] (odd_fft), each of length N/2.
+        # We need to combine them into a single result of length N.
+        #
+        # The key insight from the DFT definition is that the full DFT Xk can be
+        # expressed in terms of the two half-size DFTs using the identity:
+        #
+        #   Xk = SUM[n=0..N-1] xn * e^(-j*2*π*k*n/N)
+        #      = SUM[n even]  xn * e^(-j*2*π*k*n/N)   <- even terms
+        #      + SUM[n odd]   xn * e^(-j*2*π*k*n/N)   <- odd terms
+        #
+        # To simplify the two sums, we introduce a new index m that counts only
+        # within each half. For the even terms, every n is a multiple of 2, so we
+        # write n=2m (m=0,1,...,N/2-1). For the odd terms, every n is one past a
+        # multiple of 2, so we write n=2m+1 (m=0,1,...,N/2-1). Substituting and
+        # simplifying (the e^(-j*2*π*k*(2m)/N) term factors into a half-size DFT
+        # because 2/N cancels to 1/(N/2)), this reduces to:
+        #
+        #   X[k] = E[k] + e^(-j*2*π*k/N) * O[k]
+        #
+        # The factor e^(-j*2*π*k/N) is called the TWIDDLE FACTOR (W_N^k).
+        # Expanding via Euler's formula: e^(j*x) = cos(x) + j*sin(x):
+        #
+        #   W_N^k = cos(-2*π*k/N) + j*sin(-2*π*k/N)
+        #
+        # This is a point on the unit circle in the complex plane, rotating
+        # clockwise as k increases. It acts as a phase shift that aligns the
+        # odd half's frequency components with the even half's before adding them.
+        #
+        # The second output line exploits a symmetry property of the twiddle factor:
+        #
+        #   W_N^(k + N/2) = -W_N^k    (the factor flips sign halfway around the circle)
+        #
+        # This means X[k + N/2] can be computed for FREE by simply negating the
+        # twiddle term we already computed for X[k]:
+        #
+        #   X[k + N/2] = E[k] - W_N^k * O[k]
+        #
+        # This is the "butterfly": one twiddle multiplication, two outputs.
+        # It is the reason FFT costs O(N log N) instead of O(N^2) — at each
+        # level of the recursion, every pair of outputs shares a single twiddle.
+        #
+        #   Diagram for one butterfly (one value of k):
+        #
+        #   E[k] ----+--------> X[k]       = E[k] + W * O[k]
+        #             \   /
+        #              \ / (multiply O[k] by twiddle W, then add/subtract)
+        #              / \
+        #   O[k] ----+--------> X[k+N/2]  = E[k] - W * O[k]
+        #
         result_complex : list[complex] = [ complex( real = 0.0 , imag = 0.0 ) ] * len_values_complex_input
-        half_n : int           = len_values_complex_input // 2
+        half_n         : int           = len_values_complex_input // 2
 
         for k in range(half_n):
             twiddle_angle : float   = -2.0 * math.pi * k / len_values_complex_input
             twiddle       : complex = complex(
-                real = math.cos(twiddle_angle),
-                imag = math.sin(twiddle_angle),
+                real = math.cos(twiddle_angle),   # real part of W_N^k
+                imag = math.sin(twiddle_angle),   # imaginary part of W_N^k
             )
-            result_complex[k]          = even_fft[k] + twiddle * odd_fft[k]
-            result_complex[k + half_n] = even_fft[k] - twiddle * odd_fft[k]
+            result_complex[k]          = even_fft[k] + twiddle * odd_fft[k]   # upper butterfly output
+            result_complex[k + half_n] = even_fft[k] - twiddle * odd_fft[k]   # lower butterfly output (sign flipped)
 
         return result_complex
     #-------------------------------------------------------------------------
@@ -186,7 +243,20 @@ class FastFourierTransform:
     #-------------------------------------------------------------------------
     def _compute_magnitude(self) -> np.ndarray:
         """
-        Computes |Xk| = sqrt(a^2 + b^2) for each complex FFT coefficient.
+        Computes the magnitude (absolute value) of each complex FFT coefficient.
+
+        The FFT output is an array of complex numbers of the form a + j*b, where:
+          a  — the real part, related to the cosine component at that frequency
+          b  — the imaginary part, related to the sine component at that frequency
+
+        A complex number alone does not tell us "how strong" a frequency is, because
+        the energy is split across its real and imaginary parts. The magnitude combines
+        them into a single non-negative number representing the total strength:
+
+          |Xk| = sqrt(a^2 + b^2)
+
+        This is simply the length of the vector (a, b) in the complex plane —
+        the same Pythagorean theorem used to find the hypotenuse of a right triangle.
         np.abs() is the equivalent numpy function.
         """
         magnitude : np.ndarray = np.array([0.0] * self._result.size)
@@ -219,14 +289,37 @@ class FastFourierTransform:
     #-------------------------------------------------------------------------
     def _compute_amplitude(self) -> np.ndarray:
         """
-        Normalizes magnitude over the usable half of the spectrum.
-        Multiplies by 2 to compensate for discarding the upper half (Nyquist cutoff),
-        then divides by the original signal length N to scale back to the original
-        signal amplitude. The original length (not the zero-padded size) is used
-        because the padding contributes no real signal energy.
+        WHAT IS AMPLITUDE?
+        Amplitude is the strength or intensity of a frequency component in the signal.
+        For a cosine wave written as A * cos(2*π*f*t), A is the amplitude — it is how
+        tall the wave is, i.e. how far it swings above and below zero.
 
-          e.g. a 1 Hz tone with N=8 yields raw magnitude ~3.9997
-               3.9997 * 2 / 8 = 0.9999 ≈ 1.0
+        After the FFT, each frequency bin has a raw magnitude. The amplitude here is
+        that magnitude scaled so that its value directly matches the A in the original
+        wave formula. For example, our composite signal contains four cosines each with
+        A=1.0 at 1, 7, 13, and 15 Hz. After normalization, the amplitude array should
+        read ≈ 1.0 at those four bins and ≈ 0.0 everywhere else — confirming both which
+        frequencies are present and how strong each one is.
+
+        Two corrections are applied to the raw magnitude to reach this scale:
+
+        1. DIVISION BY N — the DFT formula accumulates N sample contributions
+           in each coefficient, so raw magnitudes are proportional to N. Dividing
+           by N scales each coefficient back to the amplitude of the original wave.
+           The original signal length is used here (not the zero-padded size),
+           because the padding adds zeros that contribute no real signal energy —
+           using the padded size would artificially reduce the result.
+
+        2. MULTIPLICATION BY 2 — we only keep the lower half of the spectrum
+           (the Nyquist cutoff). Discarding the upper half also discards half of
+           the total energy, since the two halves are symmetric mirrors. Multiplying
+           by 2 restores the energy lost by dropping that mirror half.
+
+        Combined correction: magnitude * 2 / N
+
+          e.g. a pure 1 Hz cosine of amplitude 1.0, sampled N=8 times:
+               raw magnitude at 1 Hz bin  ≈ 3.9997
+               3.9997 * 2 / 8             = 0.9999  ≈ 1.0  (correct amplitude restored)
         """
         return self._magnitude[0 : self._fft_size // 2] * 2 / self._signal_num_samples
     #-------------------------------------------------------------------------
