@@ -140,15 +140,24 @@ class DiscreteFourierTransform:
         """
         return self._magnitude[0 : self._signal_num_samples // 2] * 2 / self._signal_num_samples
     #-------------------------------------------------------------------------
+    #-------------------------------------------------------------------------
+    def get_transform(self) -> dict[str, Any]:
+        return_obj : dict[str, Any] = {
+            'usable_frequencies' : self.usable_frequencies.tolist(),
+            'amplitude'          : self.amplitude.tolist(),
+        }
+        return return_obj
+    #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
 class Plotter:
     """Renders the time-domain and frequency-domain graphs."""
     #-------------------------------------------------------------------------
-    def __init__(self, signal_data: dict[str, Any], dft: DiscreteFourierTransform) -> None:
-        self._signal_time_span_samples  : list[float]               = signal_data['time_span_samples']
-        self._signal_values             : list[float]               = signal_data['wave_values']
-        self._dft                       : DiscreteFourierTransform  = dft
+    def __init__(self, signal_data: dict[str, Any], dft_data: dict[str, Any]) -> None:
+        self._signal_time_span_samples  : list[float]   = signal_data['time_span_samples']
+        self._signal_values             : list[float]   = signal_data['wave_values']
+        self._usable_frequencies        : list[float]   = dft_data['usable_frequencies']
+        self._amplitude                 : list[float]   = dft_data['amplitude']
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
     def plot_time_domain(self) -> None:
@@ -165,7 +174,7 @@ class Plotter:
         plt.title(label="Frequency spectrum (Discrete Fourier Transform)")
         plt.xlabel(xlabel="Frequency [Hz]")
         plt.ylabel(ylabel="Amplitude")
-        plt.bar(x=self._dft.usable_frequencies, height=self._dft.amplitude, width=1)
+        plt.bar(x=self._usable_frequencies, height=self._amplitude, width=1)
         plt.show()
     #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
@@ -173,15 +182,16 @@ class Plotter:
 #-------------------------------------------------------------------------
 def main() -> None:
     #-----
-    signal_duration : float = 0.875 * 5 # initial duration set to 0.875 but decided to lengthen by multiplying by 5
-    signal_num_samples : int = 8 * 5 * 32 # originall 8 sambles for a duration of 0.875, once the signal was lengthen by 5 wr then multiplied by 5 and then later we multiplied by 32 to add more data
+    signal_duration     : float = 0.875 * 5 # initial duration set to 0.875 but decided to lengthen by multiplying by 5
+    signal_num_samples  : int   = 8 * 5 * 32 # originall 8 sambles for a duration of 0.875, once the signal was lengthen by 5 wr then multiplied by 5 and then later we multiplied by 32 to add more data
     #-----
-    signal: Signal                        = Signal(duration=signal_duration, num_samples=signal_num_samples)
-    signal_data: dict[str, Any]           = signal.get_signal()
+    signal: Signal                  = Signal(duration=signal_duration, num_samples=signal_num_samples)
+    signal_data: dict[str, Any]     = signal.get_signal()
     #-----
-    dft: DiscreteFourierTransform         = DiscreteFourierTransform(signal_data=signal_data)
+    dft: DiscreteFourierTransform   = DiscreteFourierTransform(signal_data=signal_data)
+    dft_data: dict[str, Any]        = dft.get_transform()
     #-----
-    plotter: Plotter                      = Plotter(signal_data=signal_data, dft=dft)
+    plotter: Plotter                = Plotter(signal_data=signal_data, dft_data=dft_data)
     plotter.plot_time_domain()
     plotter.plot_frequency_spectrum()
 #-------------------------------------------------------------------------
