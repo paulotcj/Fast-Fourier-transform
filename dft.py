@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import math
 from typing import Any
 
@@ -160,21 +161,55 @@ class Plotter:
         self._amplitude                 : list[float]   = dft_data['amplitude']
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
-    def plot_time_domain(self) -> None:
+    def _plot_time_domain(self, ax: Axes) -> None:
         """Plots the composite signal amplitude over time."""
-        plt.title(label="Time-domain signal")
-        plt.xlabel(xlabel="Time [s]")
-        plt.ylabel(ylabel="Amplitude")
-        plt.plot(self._signal_time_span_samples, self._signal_values)
-        plt.show()
+        ax.set_title(label="Time-domain signal")
+        ax.set_xlabel(xlabel="Time [s]")
+        ax.set_ylabel(ylabel="Amplitude")
+        ax.plot(self._signal_time_span_samples, self._signal_values)
+        ax.grid(True)
     #-------------------------------------------------------------------------
     #-------------------------------------------------------------------------
-    def plot_frequency_spectrum(self) -> None:
-        """Plots the DFT magnitude spectrum up to the Nyquist frequency."""
-        plt.title(label="Frequency spectrum (Discrete Fourier Transform)")
-        plt.xlabel(xlabel="Frequency [Hz]")
-        plt.ylabel(ylabel="Amplitude")
-        plt.bar(x=self._usable_frequencies, height=self._amplitude, width=1)
+    def _plot_frequency_spectrum(self, ax: Axes) -> None:
+        """Plots the DFT magnitude spectrum up to the Nyquist frequency, with peak annotations."""
+        bar_width : float = self._usable_frequencies[1] - self._usable_frequencies[0]
+
+        ax.set_title(label="Frequency spectrum (Discrete Fourier Transform)")
+        ax.set_xlabel(xlabel="Frequency [Hz]")
+        ax.set_ylabel(ylabel="Amplitude")
+        ax.bar(x=self._usable_frequencies, height=self._amplitude, width=bar_width)
+        ax.grid(True, axis='y')
+
+        # Annotate local maxima that exceed 10% of the peak amplitude,
+        # and track the highest peak frequency to set a tight x-axis limit.
+        peak_threshold    : float = max(self._amplitude) * 0.1
+        highest_peak_freq : float = 0.0
+        for i in range(1, len(self._amplitude) - 1):
+            if (    self._amplitude[i] > self._amplitude[i - 1]
+                and self._amplitude[i] > self._amplitude[i + 1]
+                and self._amplitude[i] > peak_threshold         ):
+                ax.annotate(
+                    text       = f'{self._usable_frequencies[i]:.0f} Hz',
+                    xy         = (self._usable_frequencies[i], self._amplitude[i]),
+                    xytext     = (0, 6),
+                    textcoords = 'offset points',
+                    ha         = 'center',
+                    fontsize   = 9,
+                )
+                if self._usable_frequencies[i] > highest_peak_freq:
+                    highest_peak_freq = self._usable_frequencies[i]
+
+        # Limit x-axis to 20% beyond the highest detected peak so the plot
+        # doesn't show a large empty frequency range.
+        ax.set_xlim(left=0, right=highest_peak_freq * 1.2)
+    #-------------------------------------------------------------------------
+    #-------------------------------------------------------------------------
+    def plot_all(self) -> None:
+        """Renders both plots stacked in a single figure."""
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
+        self._plot_time_domain(ax=ax1)
+        self._plot_frequency_spectrum(ax=ax2)
+        plt.tight_layout()
         plt.show()
     #-------------------------------------------------------------------------
 #-------------------------------------------------------------------------
@@ -192,8 +227,7 @@ def main() -> None:
     dft_data: dict[str, Any]        = dft.get_transform()
     #-----
     plotter: Plotter                = Plotter(signal_data=signal_data, dft_data=dft_data)
-    plotter.plot_time_domain()
-    plotter.plot_frequency_spectrum()
+    plotter.plot_all()
 #-------------------------------------------------------------------------
 
 if __name__ == "__main__":
